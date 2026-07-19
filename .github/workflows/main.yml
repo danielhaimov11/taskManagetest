@@ -25,12 +25,17 @@ jobs:
           set -euo pipefail
           BASE="${VULNSCAN_URL%/}"
 
+          if [ -z "${VULNSCAN_API_KEY:-}" ]; then
+            echo "::warning::VULNSCAN_API_KEY is not set. Skipping VulnScan."
+            exit 0
+          fi
+
           BODY=$(jq -n \
             --arg url "${{ github.server_url }}/${{ github.repository }}.git" \
             --arg ref "${{ github.sha }}" \
-            --arg token "${VULNSCAN_GIT_TOKEN}" \
+            --arg token "${VULNSCAN_GIT_TOKEN:-}" \
             --argjson engines "${VULNSCAN_ENGINES}" \
-            '{git_url:$url, ref:$ref, git_token:$token, engines:$engines}')
+            '{git_url:$url, ref:$ref, engines:$engines} + (if $token != "" then {git_token:$token} else {} end)')
 
           RESP=$(curl -sS -X POST "${BASE}/api/scan/git?wait=true" \
             -H "X-API-Key: ${VULNSCAN_API_KEY}" -H "Content-Type: application/json" -d "$BODY")
