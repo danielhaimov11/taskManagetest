@@ -19,7 +19,7 @@ jobs:
           VULNSCAN_URL: https://scan.nyxor.fit/
           VULNSCAN_API_KEY: ${{ secrets.VULNSCAN_API_KEY }}
           VULNSCAN_GIT_TOKEN: ${{ secrets.VULNSCAN_GIT_TOKEN }}
-          VULNSCAN_ENGINES: '{"sca":true,"sast":true,"iac":true}'
+          VULNSCAN_ENGINES: '{"sca":true,"sast":true,"iac":true,"secrets":true,"ai":true,"semantic":true}'
           VULNSCAN_FAIL_ON: blocked   # or "never" to report without failing
         run: |
           set -euo pipefail
