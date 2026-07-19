@@ -1,0 +1,66 @@
+name: VulnScan
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write   # only needed for the SARIF upload step
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: VulnScan
+        id: vulnscan
+        env:
+          VULNSCAN_URL: https://scan.nyxor.fit/
+          VULNSCAN_API_KEY: ${{ secrets.VULNSCAN_API_KEY }}
+          VULNSCAN_GIT_TOKEN: ${{ secrets.VULNSCAN_GIT_TOKEN }}
+          VULNSCAN_ENGINES: '{"sca":true,"sast":true,"iac":true}'
+          VULNSCAN_FAIL_ON: blocked   # or "never" to report without failing
+        run: |
+          set -euo pipefail
+          BASE="${VULNSCAN_URL%/}"
+
+          BODY=$(jq -n \
+            --arg url "${{ github.server_url }}/${{ github.repository }}.git" \
+            --arg ref "${{ github.sha }}" \
+            --arg token "${VULNSCAN_GIT_TOKEN}" \
+            --argjson engines "${VULNSCAN_ENGINES}" \
+            '{git_url:$url, ref:$ref, git_token:$token, engines:$engines}')
+
+          RESP=$(curl -sS -X POST "${BASE}/api/scan/git?wait=true" \
+            -H "X-API-Key: ${VULNSCAN_API_KEY}" -H "Content-Type: application/json" -d "$BODY")
+
+          SCAN_ID=$(echo "$RESP" | jq -r '.scanId // empty')
+          STATUS=$(echo "$RESP" | jq -r '.policy_status // "unknown"')
+          if [ -z "$SCAN_ID" ]; then
+            echo "::error::VulnScan did not return a scan id. Response:"
+            echo "$RESP" | jq -r '.error // .' || echo "$RESP"
+            exit 1
+          fi
+
+          echo "scan_id=$SCAN_ID"      >> "$GITHUB_OUTPUT"
+          echo "policy_status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "VulnScan scan #${SCAN_ID} → policy_status=${STATUS}"
+          echo "Results: ${BASE}/#/scans/${SCAN_ID}"
+
+          curl -sS -X GET "${BASE}/api/scan-history/${SCAN_ID}/export/sarif" \
+            -H "X-API-Key: ${VULNSCAN_API_KEY}" -o vulnscan-results.sarif || echo "::warning::SARIF export failed (continuing)."
+          if [ -s vulnscan-results.sarif ]; then
+            echo "sarif_path=vulnscan-results.sarif" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$STATUS" = "Blocked" ] && [ "${VULNSCAN_FAIL_ON}" = "blocked" ]; then
+            echo "::error::VulnScan policy blocked this scan (scan #${SCAN_ID})."
+            exit 1
+          fi
+
+      - name: Upload SARIF to code scanning
+        if: always() && steps.vulnscan.outputs.sarif_path != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.vulnscan.outputs.sarif_path }}
